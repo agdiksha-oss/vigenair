@@ -74,6 +74,22 @@ limitations under the License.
     <source src="" />
   </video>
 </div>
+<div
+  *ngIf="combo.variants?.[selectedFormat]?.provenance"
+  class="row provenance-disclosure"
+  style="justify-content: start"
+>
+  <mat-icon aria-hidden="true">info</mat-icon>
+  <span>{{ combo.variants![selectedFormat]!.provenance!.disclosure }}</span>
+  <a
+    *ngIf="combo.variants![selectedFormat]!.provenance!.manifest"
+    [href]="combo.variants![selectedFormat]!.provenance!.manifest"
+    target="_blank"
+    rel="noopener"
+  >
+    View provenance
+  </a>
+</div>
 <div class="row" style="justify-content: start">
   Segments: {{ combo.scenes }}
 </div>
@@ -145,6 +161,11 @@ limitations under the License.
               class="filmstrip-img {{ selectedFormat }}"
               src="{{ image.entity }}"
             />
+            <span
+              *ngIf="image.provenance"
+              class="notice-text"
+              >{{ image.provenance.disclosure }}</span
+            >
           </div>
         </div>
       }

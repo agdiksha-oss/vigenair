@@ -31,6 +31,7 @@ from typing import Any, Dict, Optional, Sequence, Tuple, Union
 from urllib import parse
 
 import config as ConfigService
+import provenance as ProvenanceService
 import pandas as pd
 import storage as StorageService
 import utils as Utils
@@ -711,6 +712,9 @@ def _render_video_variant(
           f'{video_variant.variant_id} using ffmpeg'
       ),
   )
+  horizontal_provenance = ProvenanceService.apply_provenance(
+      horizontal_combo_path
+  )
   rendered_paths = {
       Utils.RenderFormatType.HORIZONTAL.value: {
           'path': horizontal_combo_name
@@ -800,8 +804,17 @@ def _render_video_variant(
 
   for format_type, rendered_path in rendered_paths.items():
     result['variants'][format_type] = (
-        f'{ConfigService.GCS_BASE_URL}/{gcs_bucket_name}/'
-        f'{parse.quote(gcs_folder_path)}/{rendered_path["path"]}'
+        {
+            'entity': (
+                f'{ConfigService.GCS_BASE_URL}/{gcs_bucket_name}/'
+                f'{parse.quote(gcs_folder_path)}/{rendered_path["path"]}'
+            ),
+            'provenance': (
+                horizontal_provenance
+                if format_type == Utils.RenderFormatType.HORIZONTAL.value
+                else rendered_path['provenance']
+            ),
+        }
     )
     if 'images' in rendered_path:
       if 'images' not in result:
@@ -845,6 +858,10 @@ def _get_variant_ffmpeg_commands(
   ] + ffmpeg_filter + [
       '-map',
       '[outv]',
+      '-metadata',
+      'encoded_by=ViGenAiR',
+      '-metadata',
+      'comment=AI-assisted video editing and asset generation',
   ])
   if has_audio:
     ffmpeg_cmds.extend([
@@ -907,6 +924,10 @@ def _render_format(
             input_video_path,
             '-vf',
             video_filter,
+            '-metadata',
+            'encoded_by=ViGenAiR',
+            '-metadata',
+            'comment=AI-assisted video editing and asset generation',
             output_video_path,
         ],
         description=(
@@ -916,6 +937,7 @@ def _render_format(
     )
   output = {
       'path': format_name,
+      'provenance': ProvenanceService.apply_provenance(output_video_path),
   }
   if generate_image_assets:
     StorageService.upload_gcs_dir(
@@ -1118,15 +1140,22 @@ def _generate_image_assets(
         variant_id=variant_id,
         format_type=format_type,
     )
-    assets = [
-        f'{ConfigService.GCS_BASE_URL}/{gcs_bucket_name}/'
-        f'{parse.quote(gcs_folder_path)}/'
-        f'{variant_folder}/{ConfigService.OUTPUT_COMBINATION_ASSETS_DIR}/'
-        f'{format_type}/{image_asset}' for image_asset in sorted(
-            os.listdir(image_assets_path), key=lambda asset:
-            int(asset.split('/')[-1].replace('.png', '').replace('.jpg', ''))
-        ) if image_asset.endswith('.png') or image_asset.endswith('.jpg')
-    ]
+    assets = []
+    for image_asset in sorted(
+        os.listdir(image_assets_path), key=lambda asset:
+        int(asset.split('/')[-1].replace('.png', '').replace('.jpg', ''))
+    ):
+      if image_asset.endswith('.png') or image_asset.endswith('.jpg'):
+        image_path = str(image_assets_path / image_asset)
+        assets.append({
+            'entity': (
+                f'{ConfigService.GCS_BASE_URL}/{gcs_bucket_name}/'
+                f'{parse.quote(gcs_folder_path)}/'
+                f'{variant_folder}/{ConfigService.OUTPUT_COMBINATION_ASSETS_DIR}/'
+                f'{format_type}/{image_asset}'
+            ),
+            'provenance': ProvenanceService.apply_provenance(image_path),
+        })
 
     logging.info(
         'ASSETS - Generated %d image assets for variant %d in %s format',

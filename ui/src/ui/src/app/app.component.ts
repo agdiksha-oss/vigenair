@@ -1243,15 +1243,20 @@ export class AppComponent {
       renderedVariant.variants = {};
       for (const format in combo.variants) {
         renderedVariant.variants[format as FormatType] = {
-          entity: combo.variants[format],
+          entity: combo.variants[format].entity || combo.variants[format],
           approved: true,
+          provenance: combo.variants[format].provenance,
         };
       }
       if (combo.images) {
         renderedVariant.images = {};
         for (const format in combo.images) {
-          const images = combo.images[format].map((image: string) => {
-            return { entity: image, approved: true };
+          const images = combo.images[format].map((image: any) => {
+            return {
+              entity: image.entity || image,
+              approved: true,
+              provenance: image.provenance,
+            };
           });
           renderedVariant.images[format as FormatType] = images;
         }
