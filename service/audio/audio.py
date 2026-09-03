@@ -34,7 +34,6 @@ import storage as StorageService
 import utils as Utils
 import vertexai
 from vertexai.generative_models import GenerativeModel, Part
-import whisper
 
 
 def combine_audio_files(output_path: str, audio_files: Sequence[str]):
@@ -388,11 +387,19 @@ def _transcribe_whisper(
     result_dict['words'] = words_dict
     results_dict.append(result_dict)
 
-  writer = whisper.utils.get_writer(
-      ConfigService.OUTPUT_SUBTITLES_TYPE,
-      f'{output_dir}/',
+  subtitles_path = pathlib.Path(
+      output_dir,
+      f'{pathlib.Path(audio_file_path).stem}.{ConfigService.OUTPUT_SUBTITLES_TYPE}',
   )
-  writer({'segments': results_dict}, audio_file_path, {'highlight_words': True})
+  with open(subtitles_path, 'w', encoding='utf8') as subtitles_file:
+    subtitles_file.write('WEBVTT\n\n')
+    for index, segment in enumerate(results_dict, start=1):
+      subtitles_file.write(
+          f'{index}\n'
+          f'{_format_vtt_timestamp(segment["start"])} --> '
+          f'{_format_vtt_timestamp(segment["end"])}\n'
+          f'{segment["text"].strip()}\n\n'
+      )
   logging.info(
       'TRANSCRIPTION - transcript for %s written successfully!',
       audio_file_path,
@@ -418,3 +425,12 @@ def _transcribe_whisper(
       ],
   )
   return transcription_dataframe, video_language, language_probability
+
+
+def _format_vtt_timestamp(seconds: float) -> str:
+  """Formats seconds as a WebVTT timestamp."""
+  milliseconds = round(seconds * 1000)
+  hours, milliseconds = divmod(milliseconds, 60 * 60 * 1000)
+  minutes, milliseconds = divmod(milliseconds, 60 * 1000)
+  whole_seconds, milliseconds = divmod(milliseconds, 1000)
+  return f'{hours:02d}:{minutes:02d}:{whole_seconds:02d}.{milliseconds:03d}'
