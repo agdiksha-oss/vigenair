@@ -77,6 +77,34 @@ def combine_analysis_chunks(
   return combined_df
 
 
+def _parse_vtt_timestamp(timestamp: str) -> datetime.timedelta:
+  """Parses both MM:SS.mmm and HH:MM:SS.mmm WebVTT timestamps."""
+  parts = timestamp.strip().split(':')
+  if len(parts) == 3:
+    hours, minutes, seconds = parts
+    hours_int = int(hours)
+    minutes_int = int(minutes)
+    seconds_parts = seconds.split('.', 1)
+    seconds_int = int(seconds_parts[0])
+    milliseconds = seconds_parts[1] if len(seconds_parts) > 1 else ''
+    return datetime.timedelta(
+        hours=hours_int,
+        minutes=minutes_int,
+        seconds=seconds_int,
+        milliseconds=int(milliseconds.ljust(3, '0')[:3]),
+    )
+
+  minutes, seconds = parts
+  seconds_parts = seconds.split('.', 1)
+  seconds_int = int(seconds_parts[0])
+  milliseconds = seconds_parts[1] if len(seconds_parts) > 1 else ''
+  return datetime.timedelta(
+      minutes=int(minutes),
+      seconds=seconds_int,
+      milliseconds=int(milliseconds.ljust(3, '0')[:3]),
+  )
+
+
 def combine_subtitle_files(
     audio_output_dir: str,
     subtitles_output_path: str,
@@ -104,16 +132,8 @@ def combine_subtitle_files(
       for line in lines:
         if '-->' in line:
           start, end = line.strip().split(' --> ')
-          start_time = last_timestamp + datetime.timedelta(
-              minutes=int(start[:2]),
-              seconds=int(start[3:5]),
-              milliseconds=int(start[6:]),
-          )
-          end_time = last_timestamp + datetime.timedelta(
-              minutes=int(end[:2]),
-              seconds=int(end[3:5]),
-              milliseconds=int(end[6:]),
-          )
+          start_time = last_timestamp + _parse_vtt_timestamp(start)
+          end_time = last_timestamp + _parse_vtt_timestamp(end)
 
           start = start_time.strftime('%H:%M:%S.%f')[:-3]
           end = end_time.strftime('%H:%M:%S.%f')[:-3]
@@ -122,12 +142,10 @@ def combine_subtitle_files(
         else:
           combined_content += line
 
-      _, end = lines[-3].strip().split(' --> ')
-      last_timestamp += datetime.timedelta(
-          minutes=int(end[:2]),
-          seconds=int(end[3:5]),
-          milliseconds=int(end[6:]),
-      )
+      timestamp_lines = [line for line in lines if '-->' in line]
+      if timestamp_lines:
+        _, end = timestamp_lines[-1].strip().split(' --> ')
+        last_timestamp += _parse_vtt_timestamp(end)
 
   with open(subtitles_output_path, 'w', encoding='utf-8') as f:
     f.write(combined_content)

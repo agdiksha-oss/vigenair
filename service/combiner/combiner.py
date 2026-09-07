@@ -990,6 +990,11 @@ def _render_video_variant(
     )
     rendered_paths[original_format] = {'path': base_combo_name}
 
+  provenance_cache = {}
+  for rendered_path in rendered_paths.values():
+    asset_path = str(pathlib.Path(output_dir, rendered_path['path']))
+    provenance_cache[asset_path] = ProvenanceService.apply_provenance(asset_path)
+
   StorageService.upload_gcs_dir(
       source_directory=output_dir,
       bucket_name=gcs_bucket_name,
@@ -1019,6 +1024,7 @@ def _render_video_variant(
       result['texts'] = text_assets
 
   for vf_member, rendered_path in rendered_paths.items():
+    asset_path = str(pathlib.Path(output_dir, rendered_path['path']))
     format_str = vf_member.aspect_ratio_str
     result['variants'][format_str] = (
     {
@@ -1026,9 +1032,7 @@ def _render_video_variant(
         f'{ConfigService.GCS_BASE_URL}/{gcs_bucket_name}/'
         f'{parse.quote(gcs_folder_path)}/{rendered_path["path"]}'
       ),
-      'provenance': ProvenanceService.apply_provenance(
-        str(pathlib.Path(output_dir, rendered_path['path']))
-      ),
+      'provenance': provenance_cache[asset_path],
     }
     )
     if 'images' in rendered_path:
@@ -1068,6 +1072,7 @@ def _get_variant_ffmpeg_commands(
       ffmpeg_filter = [continuous_audio_select_filter]
     elif music_overlay:
       ffmpeg_filter = [music_overlay_select_filter, '-ac', '2']
+  disclosure = ProvenanceService.get_disclosure()
   ffmpeg_cmds.extend([
       '-filter_complex',
   ] + ffmpeg_filter + [
@@ -1076,7 +1081,7 @@ def _get_variant_ffmpeg_commands(
       '-metadata',
       'encoded_by=ViGenAiR',
       '-metadata',
-      'comment=AI-assisted video editing and asset generation',
+      f'comment={disclosure}',
   ])
   if has_audio:
     ffmpeg_cmds.extend([
@@ -1141,6 +1146,7 @@ def _render_format(
         format_type_str,
         video_filter
     )
+    disclosure = ProvenanceService.get_disclosure()
     Utils.execute_subprocess_commands(
         cmds=[
             'ffmpeg',
@@ -1152,7 +1158,7 @@ def _render_format(
             '-metadata',
             'encoded_by=ViGenAiR',
             '-metadata',
-            'comment=AI-assisted video editing and asset generation',
+            f'comment={disclosure}',
             actual_output,
         ],
         description=(
@@ -1214,10 +1220,7 @@ def _render_format(
     )
     os.rename(actual_output, output_video_path)
 
-  output = {
-      'path': format_name,
-      'provenance': ProvenanceService.apply_provenance(output_video_path),
-  }
+  output = {'path': format_name}
   if generate_image_assets:
     StorageService.upload_gcs_dir(
         source_directory=output_path,
@@ -1367,7 +1370,7 @@ def _generate_image_assets(
     output_path: str,
     variant_id: int,
     format_type: str,
-) -> Sequence[str]:
+) -> Sequence[dict[str, Any]]:
   """Generates image ad assets for a video variant in a specific format."""
   variant_folder = f'combo_{variant_id}'
   image_assets_path = pathlib.Path(

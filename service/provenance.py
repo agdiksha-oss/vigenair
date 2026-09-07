@@ -14,26 +14,38 @@
 
 """C2PA signing and provenance metadata for generated assets."""
 
+import functools
 import hashlib
 import json
+import logging
 import os
 import pathlib
-import shutil
-import tempfile
-from typing import Dict, Optional
+from typing import Any
 
-
-DISCLOSURE = os.environ.get(
-    'CONFIG_AI_DISCLOSURE',
+_DEFAULT_DISCLOSURE = (
     'This asset was created with generative AI-assisted video editing and '
-    'asset generation.',
+    'asset generation.'
 )
 
+
+def get_disclosure() -> str:
+  """Returns the active AI disclosure configured for the runtime."""
+  return os.environ.get('CONFIG_AI_DISCLOSURE', _DEFAULT_DISCLOSURE)
+
+
+def _get_disclosure() -> str:
+  """Backward-compatible alias for runtime disclosure lookup."""
+  return get_disclosure()
+
+
 def _c2pa_required() -> bool:
+  """Returns whether C2PA signing is required for rendered assets."""
   return os.environ.get('CONFIG_C2PA_REQUIRED', 'false').lower() == 'true'
 
 
+@functools.lru_cache(maxsize=None)
 def _read_secret(name: str) -> str:
+  """Reads a secret value from Secret Manager once per secret path."""
   from google.cloud import secretmanager
 
   client = secretmanager.SecretManagerServiceClient()
@@ -41,11 +53,14 @@ def _read_secret(name: str) -> str:
   return response.payload.data.decode('utf-8')
 
 
+@functools.lru_cache(maxsize=None)
 def _credential(value: str) -> str:
+  """Resolves a secret reference to its value, or returns the literal value."""
   return _read_secret(value) if value.startswith('projects/') else value
 
 
 def _sha256(file_path: str) -> str:
+  """Returns the SHA-256 digest for the provided file."""
   digest = hashlib.sha256()
   with open(file_path, 'rb') as asset_file:
     for chunk in iter(lambda: asset_file.read(1024 * 1024), b''):
@@ -54,6 +69,7 @@ def _sha256(file_path: str) -> str:
 
 
 def _mime_type(file_path: str) -> str:
+  """Returns the MIME type for an asset based on its file extension."""
   suffix = pathlib.Path(file_path).suffix.lower()
   if suffix == '.mp4':
     return 'video/mp4'
@@ -64,70 +80,122 @@ def _mime_type(file_path: str) -> str:
   raise ValueError(f'Unsupported provenance asset type: {suffix}')
 
 
-def _sign(file_path: str, title: str, mime_type: str) -> None:
-  from c2pa import Builder, C2paSignerInfo, C2paSigningAlg, Signer
+@functools.lru_cache(maxsize=None)
+def _get_signer():
+  """Lazy-loads and caches the C2PA signer for repeated asset signing."""
+  # Lazy-imported to avoid requiring C2PA or Secret Manager in non-signing paths
+  # and test runners that exercise provenance metadata without a signer.
+  from c2pa import C2paSignerInfo, C2paSigningAlg, Signer
 
   certificate = _credential(os.environ['CONFIG_C2PA_CERTIFICATE'])
   private_key = _credential(os.environ['CONFIG_C2PA_PRIVATE_KEY'])
   tsa_url = os.environ.get('CONFIG_C2PA_TSA_URL') or None
-  manifest = {
-      'claim_generator': 'ViGenAiR',
-      'title': title,
-      'format': mime_type,
-      'assertions': [
-          {
-              'label': 'c2pa.actions',
-              'data': {
-                  'actions': [
-                      {
-                          'action': 'c2pa.edited',
-                          'softwareAgent': 'ViGenAiR',
-                          'description': DISCLOSURE,
-                      }
-                  ]
-              },
-          },
-          {
-              'label': 'stds.schema-org.CreativeWork',
-              'data': {
-                  '@context': 'https://schema.org',
-                  '@type': 'CreativeWork',
-                  'description': DISCLOSURE,
-              },
-          },
-      ],
-  }
   signer_info = C2paSignerInfo(
       C2paSigningAlg.ES256,
       certificate,
       private_key,
       tsa_url,
   )
-  signer = Signer.from_info(signer_info)
-  builder = Builder.from_json(json.dumps(manifest))
-  temporary_path = f'{file_path}.c2pa'
+  return Signer.from_info(signer_info)
+
+
+def _sign(file_path: str, title: str, mime_type: str) -> bool:
+  """Signs a media asset with C2PA metadata when configuration is available.
+
+  Args:
+    file_path: Path to the asset to sign.
+    title: Human-readable title stored in the manifest.
+    mime_type: MIME type of the asset.
+
+  Returns:
+    True when signing succeeds; False when signing fails and the failure is
+    non-fatal.
+
+  Raises:
+    RuntimeError: If signing is required and fails.
+  """
+  disclosure = get_disclosure()
   try:
-    builder.sign_file(file_path, temporary_path, signer)
-    os.replace(temporary_path, file_path)
-  finally:
-    if os.path.exists(temporary_path):
-      os.remove(temporary_path)
+    from c2pa import Builder
+
+    builder = Builder.from_json(json.dumps({
+        'claim_generator': 'ViGenAiR',
+        'title': title,
+        'format': mime_type,
+        'assertions': [
+            {
+                'label': 'c2pa.actions',
+                'data': {
+                    'actions': [
+                        {
+                            'action': 'c2pa.edited',
+                            'softwareAgent': 'ViGenAiR',
+                            'description': disclosure,
+                        }
+                    ]
+                },
+            },
+            {
+                'label': 'stds.schema-org.CreativeWork',
+                'data': {
+                    '@context': 'https://schema.org',
+                    '@type': 'CreativeWork',
+                    'description': disclosure,
+                },
+            },
+        ],
+    }))
+    signer = _get_signer()
+    temporary_path = f'{file_path}.c2pa'
+    try:
+      builder.sign_file(file_path, temporary_path, signer)
+      os.replace(temporary_path, file_path)
+      return True
+    finally:
+      if os.path.exists(temporary_path):
+        os.remove(temporary_path)
+  except Exception as exc:  # pylint: disable=broad-exception-caught
+    if _c2pa_required():
+      raise RuntimeError(
+          'C2PA signing failed while CONFIG_C2PA_REQUIRED is enabled.'
+      ) from exc
+    logging.exception(
+        'C2PA signing failed for %s. Returning failed provenance status.',
+        file_path,
+    )
+    return False
 
 
-def apply_provenance(file_path: str) -> Dict[str, str]:
-  """Signs an asset when configured and returns its verifiable status."""
+def apply_provenance(file_path: str) -> dict[str, Any]:
+  """Signs an asset when configured and returns provenance details.
+
+  Args:
+    file_path: Path to the media asset to inspect or sign.
+
+  Returns:
+    A dictionary containing the provenance type, status, disclosure, and SHA-256
+    digest of the asset.
+
+  Raises:
+    RuntimeError: If C2PA signing is marked as required but is disabled or fails.
+    ValueError: If the asset extension is unsupported for signing.
+  """
   signed = False
+  disclosure = _get_disclosure()
   if os.environ.get('CONFIG_C2PA_ENABLED', 'false').lower() == 'true':
-    _sign(file_path, pathlib.Path(file_path).name, _mime_type(file_path))
-    signed = True
+    signed = _sign(file_path, pathlib.Path(file_path).name, _mime_type(file_path))
   elif _c2pa_required():
     raise RuntimeError(
         'C2PA is required but CONFIG_C2PA_ENABLED is not true.'
     )
 
+  status = 'signed' if signed else 'unsigned'
+  if not signed and os.environ.get('CONFIG_C2PA_ENABLED', 'false').lower() == 'true':
+    status = 'failed'
+
   return {
       'type': 'c2pa' if signed else 'none',
-      'status': 'signed' if signed else 'unsigned',
-      'disclosure': DISCLOSURE,
+      'status': status,
+      'disclosure': disclosure,
       'sha256': _sha256(file_path),
   }

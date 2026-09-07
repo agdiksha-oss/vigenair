@@ -119,30 +119,6 @@ The `npm start` and `npm run update-app` scripts manage deployments for you; a n
 
 ### Requirements
 
-### AI provenance configuration
-
-Rendered videos and generated image assets are signed with C2PA when the
-following Cloud Function environment variables are configured:
-
-```yaml
-CONFIG_C2PA_ENABLED: 'true'
-CONFIG_C2PA_REQUIRED: 'true'
-CONFIG_C2PA_CERTIFICATE: projects/<project>/secrets/<certificate>/versions/latest
-CONFIG_C2PA_PRIVATE_KEY: projects/<project>/secrets/<private-key>/versions/latest
-CONFIG_C2PA_TSA_URL: https://<approved-timestamp-authority>
-CONFIG_AI_DISCLOSURE: <approved compliance disclosure>
-```
-
-Store the certificate chain and private key in Secret Manager. The deployment
-service account requires `roles/secretmanager.secretAccessor`. Do not place
-certificate or private-key contents in `.env.yaml` or source control.
-
-When `CONFIG_C2PA_REQUIRED` is `true`, rendering fails if signing is disabled
-or signing fails. Visible burn-in labels are intentionally not added based on
-the current product-owner determination that ViGenAiR edits existing source
-video rather than generating synthetic humans or deceptive content. This
-determination must be reconfirmed by the compliance owner before release.
-
 You need the following to use Vigenair:
 
 * Google account: required to access the Vigenair web app.
@@ -157,6 +133,33 @@ If you will also deploy Vigenair, you need to have the following additional role
   Function under the Service Account. Additionally, it is critical that the user
   deploying Vigenair must be added to the Service Account's Credentials.
 * `Project IAM Admin` to be able to run the commands that set up roles and policy bindings in the deployment script. See [IAM access control](https://cloud.google.com/resource-manager/docs/access-control-proj) for more information.
+
+### AI provenance configuration
+
+Rendered videos and generated image assets are signed with C2PA when the
+following Cloud Function environment variables are configured:
+
+```yaml
+CONFIG_C2PA_ENABLED: 'true'
+CONFIG_C2PA_REQUIRED: 'true'
+CONFIG_C2PA_CERTIFICATE: projects/<project>/secrets/<certificate>/versions/latest
+CONFIG_C2PA_PRIVATE_KEY: projects/<project>/secrets/<private-key>/versions/latest
+CONFIG_C2PA_TSA_URL: https://<approved-timestamp-authority>
+CONFIG_AI_DISCLOSURE: <approved compliance disclosure>
+```
+
+The `CONFIG_C2PA_CERTIFICATE` and `CONFIG_C2PA_PRIVATE_KEY` values must use an
+ECDSA P-256 key pair, which is required for the ES256 signing algorithm. Store
+the certificate chain and private key in Secret Manager. The deployment service
+account requires `roles/secretmanager.secretAccessor`. Do not place certificate
+or private-key contents in `.env.yaml` or source control.
+
+When `CONFIG_C2PA_REQUIRED` is `true`, rendering fails if signing is disabled
+or signing fails. Visible burn-in labels are intentionally not added based on
+the current product-owner determination that ViGenAiR edits existing source
+video rather than generating synthetic humans or deceptive content. This
+determination should be reconfirmed in case the code was modified to use GenAI
+for visual content, after all.
 
 > The Vigenair [setup and deployment script](#get-started) will create the following components automatically:
 >
