@@ -14,13 +14,26 @@
 
 """C2PA signing and provenance metadata for generated assets."""
 
+from __future__ import annotations
+
 import functools
 import hashlib
 import json
 import logging
 import os
 import pathlib
+import tempfile
 from typing import Any
+
+try:
+  import c2pa
+except ImportError:
+  c2pa = None
+
+try:
+  from google.cloud import secretmanager
+except ImportError:
+  secretmanager = None
 
 _DEFAULT_DISCLOSURE = (
     'This asset was created with generative AI-assisted video editing and '
@@ -33,11 +46,6 @@ def get_disclosure() -> str:
   return os.environ.get('CONFIG_AI_DISCLOSURE', _DEFAULT_DISCLOSURE)
 
 
-def _get_disclosure() -> str:
-  """Backward-compatible alias for runtime disclosure lookup."""
-  return get_disclosure()
-
-
 def _c2pa_required() -> bool:
   """Returns whether C2PA signing is required for rendered assets."""
   return os.environ.get('CONFIG_C2PA_REQUIRED', 'false').lower() == 'true'
@@ -46,8 +54,10 @@ def _c2pa_required() -> bool:
 @functools.lru_cache(maxsize=None)
 def _read_secret(name: str) -> str:
   """Reads a secret value from Secret Manager once per secret path."""
-  from google.cloud import secretmanager
-
+  if secretmanager is None:
+    raise RuntimeError(
+        'google-cloud-secret-manager is not installed. Required to read C2PA secrets.'
+    )
   client = secretmanager.SecretManagerServiceClient()
   response = client.access_secret_version(request={'name': name})
   return response.payload.data.decode('utf-8')
@@ -80,23 +90,39 @@ def _mime_type(file_path: str) -> str:
   raise ValueError(f'Unsupported provenance asset type: {suffix}')
 
 
-@functools.lru_cache(maxsize=None)
-def _get_signer():
-  """Lazy-loads and caches the C2PA signer for repeated asset signing."""
-  # Lazy-imported to avoid requiring C2PA or Secret Manager in non-signing paths
-  # and test runners that exercise provenance metadata without a signer.
-  from c2pa import C2paSignerInfo, C2paSigningAlg, Signer
-
-  certificate = _credential(os.environ['CONFIG_C2PA_CERTIFICATE'])
-  private_key = _credential(os.environ['CONFIG_C2PA_PRIVATE_KEY'])
-  tsa_url = os.environ.get('CONFIG_C2PA_TSA_URL') or None
-  signer_info = C2paSignerInfo(
-      C2paSigningAlg.ES256,
+@functools.lru_cache(maxsize=4)
+def _create_signer(
+    certificate: str,
+    private_key: str,
+    tsa_url: str | None = None,
+) -> c2pa.Signer:
+  """Creates a C2PA signer instance cached by credential values."""
+  if c2pa is None:
+    raise RuntimeError(
+        'c2pa package is not installed. Please install c2pa-python.'
+    )
+  signer_info = c2pa.C2paSignerInfo(
+      c2pa.C2paSigningAlg.ES256,
       certificate,
       private_key,
       tsa_url,
   )
-  return Signer.from_info(signer_info)
+  return c2pa.Signer.from_info(signer_info)
+
+
+def _get_signer() -> c2pa.Signer:
+  """Loads the C2PA signer using environment configuration."""
+  cert_ref = os.environ.get('CONFIG_C2PA_CERTIFICATE')
+  key_ref = os.environ.get('CONFIG_C2PA_PRIVATE_KEY')
+  if not cert_ref or not key_ref:
+    raise ValueError(
+        'CONFIG_C2PA_CERTIFICATE and CONFIG_C2PA_PRIVATE_KEY must be set when '
+        'CONFIG_C2PA_ENABLED is true.'
+    )
+  certificate = _credential(cert_ref)
+  private_key = _credential(key_ref)
+  tsa_url = os.environ.get('CONFIG_C2PA_TSA_URL') or None
+  return _create_signer(certificate, private_key, tsa_url)
 
 
 def _sign(file_path: str, title: str, mime_type: str) -> bool:
@@ -114,11 +140,19 @@ def _sign(file_path: str, title: str, mime_type: str) -> bool:
   Raises:
     RuntimeError: If signing is required and fails.
   """
-  disclosure = get_disclosure()
-  try:
-    from c2pa import Builder
+  if c2pa is None:
+    if _c2pa_required():
+      raise RuntimeError(
+          'C2PA signing failed: c2pa package is not installed while '
+          'CONFIG_C2PA_REQUIRED is enabled.'
+      )
+    logging.warning('c2pa package is not installed; skipping signing.')
+    return False
 
-    builder = Builder.from_json(json.dumps({
+  disclosure = get_disclosure()
+  c2pa_error = getattr(c2pa, 'Error', Exception)
+  try:
+    builder = c2pa.Builder.from_json(json.dumps({
         'claim_generator': 'ViGenAiR',
         'title': title,
         'format': mime_type,
@@ -146,7 +180,9 @@ def _sign(file_path: str, title: str, mime_type: str) -> bool:
         ],
     }))
     signer = _get_signer()
-    temporary_path = f'{file_path}.c2pa'
+    dir_name = os.path.dirname(os.path.abspath(file_path))
+    with tempfile.NamedTemporaryFile(dir=dir_name, delete=False) as temp_file:
+      temporary_path = temp_file.name
     try:
       builder.sign_file(file_path, temporary_path, signer)
       os.replace(temporary_path, file_path)
@@ -154,7 +190,7 @@ def _sign(file_path: str, title: str, mime_type: str) -> bool:
     finally:
       if os.path.exists(temporary_path):
         os.remove(temporary_path)
-  except Exception as exc:  # pylint: disable=broad-exception-caught
+  except (c2pa_error, OSError, ValueError) as exc:
     if _c2pa_required():
       raise RuntimeError(
           'C2PA signing failed while CONFIG_C2PA_REQUIRED is enabled.'
@@ -181,7 +217,7 @@ def apply_provenance(file_path: str) -> dict[str, Any]:
     ValueError: If the asset extension is unsupported for signing.
   """
   signed = False
-  disclosure = _get_disclosure()
+  disclosure = get_disclosure()
   if os.environ.get('CONFIG_C2PA_ENABLED', 'false').lower() == 'true':
     signed = _sign(file_path, pathlib.Path(file_path).name, _mime_type(file_path))
   elif _c2pa_required():

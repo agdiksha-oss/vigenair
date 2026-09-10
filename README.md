@@ -134,6 +134,12 @@ If you will also deploy Vigenair, you need to have the following additional role
   deploying Vigenair must be added to the Service Account's Credentials.
 * `Project IAM Admin` to be able to run the commands that set up roles and policy bindings in the deployment script. See [IAM access control](https://cloud.google.com/resource-manager/docs/access-control-proj) for more information.
 
+> The Vigenair [setup and deployment script](#get-started) will create the following components automatically:
+>
+> * A Google Cloud Storage (GCS) bucket named <code>*<gcp_project_id>*-vigenair</code>
+> * A Cloud Function (2nd gen) named `vigenair` that fulfills both the [Extractor and Combiner services](#solution-details). Refer to [deploy.sh](./service/deploy.sh) for specs.
+> * An Apps Script deployment for the frontend web app.
+
 ### AI provenance configuration
 
 Rendered videos and generated image assets are signed with C2PA when the
@@ -155,17 +161,10 @@ account requires `roles/secretmanager.secretAccessor`. Do not place certificate
 or private-key contents in `.env.yaml` or source control.
 
 When `CONFIG_C2PA_REQUIRED` is `true`, rendering fails if signing is disabled
-or signing fails. Visible burn-in labels are intentionally not added based on
-the current product-owner determination that ViGenAiR edits existing source
-video rather than generating synthetic humans or deceptive content. This
-determination should be reconfirmed in case the code was modified to use GenAI
-for visual content, after all.
-
-> The Vigenair [setup and deployment script](#get-started) will create the following components automatically:
->
-> * A Google Cloud Storage (GCS) bucket named <code>*<gcp_project_id>*-vigenair</code>
-> * A Cloud Function (2nd gen) named `vigenair` that fulfills both the [Extractor and Combiner services](#solution-details). Refer to [deploy.sh](./service/deploy.sh) for specs.
-> * An Apps Script deployment for the frontend web app.
+or signing fails. Visible burn-in labels are not added because ViGenAiR edits
+existing source video rather than generating synthetic humans or deceptive
+content. This determination should be reconfirmed in case the code was modified
+to use GenAI for visual content, after all.
 
 ## Why use Vigenair?
 

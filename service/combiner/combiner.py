@@ -993,7 +993,8 @@ def _render_video_variant(
   provenance_cache = {}
   for rendered_path in rendered_paths.values():
     asset_path = str(pathlib.Path(output_dir, rendered_path['path']))
-    provenance_cache[asset_path] = ProvenanceService.apply_provenance(asset_path)
+    if asset_path not in provenance_cache:
+      provenance_cache[asset_path] = ProvenanceService.apply_provenance(asset_path)
 
   StorageService.upload_gcs_dir(
       source_directory=output_dir,
@@ -1026,15 +1027,13 @@ def _render_video_variant(
   for vf_member, rendered_path in rendered_paths.items():
     asset_path = str(pathlib.Path(output_dir, rendered_path['path']))
     format_str = vf_member.aspect_ratio_str
-    result['variants'][format_str] = (
-    {
-      'entity': (
-        f'{ConfigService.GCS_BASE_URL}/{gcs_bucket_name}/'
-        f'{parse.quote(gcs_folder_path)}/{rendered_path["path"]}'
-      ),
-      'provenance': provenance_cache[asset_path],
+    result['variants'][format_str] = {
+        'entity': (
+            f'{ConfigService.GCS_BASE_URL}/{gcs_bucket_name}/'
+            f'{parse.quote(gcs_folder_path)}/{rendered_path["path"]}'
+        ),
+        'provenance': provenance_cache[asset_path],
     }
-    )
     if 'images' in rendered_path:
       if 'images' not in result:
         result['images'] = {}

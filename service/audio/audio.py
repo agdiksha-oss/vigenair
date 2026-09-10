@@ -80,28 +80,23 @@ def combine_analysis_chunks(
 def _parse_vtt_timestamp(timestamp: str) -> datetime.timedelta:
   """Parses both MM:SS.mmm and HH:MM:SS.mmm WebVTT timestamps."""
   parts = timestamp.strip().split(':')
-  if len(parts) == 3:
-    hours, minutes, seconds = parts
-    hours_int = int(hours)
-    minutes_int = int(minutes)
-    seconds_parts = seconds.split('.', 1)
-    seconds_int = int(seconds_parts[0])
-    milliseconds = seconds_parts[1] if len(seconds_parts) > 1 else ''
-    return datetime.timedelta(
-        hours=hours_int,
-        minutes=minutes_int,
-        seconds=seconds_int,
-        milliseconds=int(milliseconds.ljust(3, '0')[:3]),
-    )
+  if len(parts) not in (2, 3):
+    raise ValueError(f'Invalid WebVTT timestamp format: {timestamp}')
 
-  minutes, seconds = parts
-  seconds_parts = seconds.split('.', 1)
+  hours_int = int(parts[0]) if len(parts) == 3 else 0
+  minutes_int = int(parts[1]) if len(parts) == 3 else int(parts[0])
+  seconds_str = parts[2] if len(parts) == 3 else parts[1]
+
+  seconds_parts = seconds_str.split('.', 1)
   seconds_int = int(seconds_parts[0])
-  milliseconds = seconds_parts[1] if len(seconds_parts) > 1 else ''
+  milliseconds_str = seconds_parts[1] if len(seconds_parts) > 1 else ''
+  milliseconds_int = int(milliseconds_str.ljust(3, '0')[:3]) if milliseconds_str else 0
+
   return datetime.timedelta(
-      minutes=int(minutes),
+      hours=hours_int,
+      minutes=minutes_int,
       seconds=seconds_int,
-      milliseconds=int(milliseconds.ljust(3, '0')[:3]),
+      milliseconds=milliseconds_int,
   )
 
 
