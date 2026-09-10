@@ -77,10 +77,10 @@ limitations under the License.
   style="justify-content: start"
 >
   <mat-icon aria-hidden="true">info</mat-icon>
-  <span>{{ combo.variants![selectedFormat]!.provenance!.disclosure }}</span>
+  <span>{{ combo.variants?.[selectedFormat]?.provenance?.disclosure }}</span>
   <a
-    *ngIf="combo.variants![selectedFormat]!.provenance!.manifest"
-    [href]="combo.variants![selectedFormat]!.provenance!.manifest"
+    *ngIf="combo.variants?.[selectedFormat]?.provenance?.manifest"
+    [href]="combo.variants?.[selectedFormat]?.provenance?.manifest"
     target="_blank"
     rel="noopener"
   >
@@ -141,7 +141,7 @@ limitations under the License.
       <div
         *ngIf="images[0]?.provenance"
         class="provenance-disclosure"
-        [matTooltip]="images[0].provenance.disclosure"
+        [matTooltip]="images[0]?.provenance?.disclosure || ''"
       >
         <mat-icon aria-hidden="true">info</mat-icon>
         <span>AI disclosure</span>

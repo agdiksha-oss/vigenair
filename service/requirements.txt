@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+c2pa-python==0.37.8
 faster-whisper==1.0.3
 ffmpeg==1.4
 ffprobe==0.5
@@ -27,7 +28,6 @@ iso-639==0.4.5
 numpy==1.26.4
 pandas==1.5.3
 protobuf==3.20.2
-c2pa-python==0.37.8
 spleeter==2.4.0
 torch==2.3.1
 Werkzeug==2.3.8

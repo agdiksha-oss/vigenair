@@ -140,7 +140,7 @@ If you will also deploy Vigenair, you need to have the following additional role
 > * A Cloud Function (2nd gen) named `vigenair` that fulfills both the [Extractor and Combiner services](#solution-details). Refer to [deploy.sh](./service/deploy.sh) for specs.
 > * An Apps Script deployment for the frontend web app.
 
-### AI provenance configuration
+### AI Provenance Configuration (Optional)
 
 Rendered videos and generated image assets are signed with C2PA when the
 following Cloud Function environment variables are configured:

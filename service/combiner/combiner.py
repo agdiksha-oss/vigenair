@@ -993,8 +993,12 @@ def _render_video_variant(
   provenance_cache = {}
   for rendered_path in rendered_paths.values():
     asset_path = str(pathlib.Path(output_dir, rendered_path['path']))
-    if asset_path not in provenance_cache:
-      provenance_cache[asset_path] = ProvenanceService.apply_provenance(asset_path)
+    if 'provenance' in rendered_path:
+      provenance_cache[asset_path] = rendered_path['provenance']
+    elif asset_path not in provenance_cache:
+      provenance_cache[asset_path] = (
+          ProvenanceService.apply_provenance(asset_path)
+      )
 
   StorageService.upload_gcs_dir(
       source_directory=output_dir,
@@ -1178,8 +1182,8 @@ def _render_format(
 
     # Ensure crop dimensions don't exceed input dimensions
     if crop_width > input_width:
-        crop_width = input_width
-        crop_height = int(input_width * target_h / target_w)
+      crop_width = input_width
+      crop_height = int(input_width * target_h / target_w)
 
     crop_filter = (
         f'crop={crop_width}:{crop_height}:'
@@ -1195,6 +1199,7 @@ def _render_format(
         crop_height
     )
 
+    disclosure = ProvenanceService.get_disclosure()
     Utils.execute_subprocess_commands(
         cmds=[
             'ffmpeg',
@@ -1203,6 +1208,10 @@ def _render_format(
             input_video_path,
             '-vf',
             crop_filter,
+            '-metadata',
+            'encoded_by=ViGenAiR',
+            '-metadata',
+            f'comment={disclosure}',
             actual_output,
         ],
         description=(
@@ -1219,7 +1228,10 @@ def _render_format(
     )
     os.rename(actual_output, output_video_path)
 
-  output = {'path': format_name}
+  output = {
+      'path': format_name,
+      'provenance': ProvenanceService.apply_provenance(output_video_path),
+  }
   if generate_image_assets:
     StorageService.upload_gcs_dir(
         source_directory=output_path,
@@ -1407,8 +1419,8 @@ def _generate_image_assets(
         assets.append({
             'entity': (
                 f'{ConfigService.GCS_BASE_URL}/{gcs_bucket_name}/'
-                f'{parse.quote(gcs_folder_path)}/'
-                f'{variant_folder}/{ConfigService.OUTPUT_COMBINATION_ASSETS_DIR}/'
+                f'{parse.quote(gcs_folder_path)}/{variant_folder}/'
+                f'{ConfigService.OUTPUT_COMBINATION_ASSETS_DIR}/'
                 f'{format_type}/{image_asset}'
             ),
             'provenance': ProvenanceService.apply_provenance(image_path),
@@ -1420,7 +1432,9 @@ def _generate_image_assets(
         variant_id,
         format_type,
     )
-  except Exception:  # pylint: disable=broad-exception-caught
+  except Exception as exc:  # pylint: disable=broad-exception-caught
+    if isinstance(exc, ProvenanceService.ProvenanceError):
+      raise
     logging.exception(
         'Encountered error during generation of image assets for variant %d '
         'in format %s! Continuing...', variant_id, format_type
